@@ -3650,6 +3650,159 @@ Object.assign(window,{addRow,num,loadEx,runAll,dlReport,newSamp,dzTab,dzOpen,dzI
         });
     }
 
+    /* ---------- BORELOG PROFILE PAGE (vector drawing, jsPDF) ---------- */
+    var COLOUR_WORDS = [
+        [/reddish|red/i, [205, 125, 105]], [/brown/i, [196, 160, 118]], [/yellow|buff|cream/i, [240, 225, 150]],
+        [/grey|gray|ash/i, [195, 195, 195]], [/black|dark/i, [120, 120, 120]], [/white/i, [248, 248, 248]],
+        [/green|olive/i, [175, 195, 140]], [/orange/i, [235, 175, 105]], [/pink/i, [235, 190, 190]]
+    ];
+    var TYPE_COLOUR = { clay: [205, 175, 135], silt: [220, 205, 165], sand: [238, 222, 155], rock: [175, 175, 185] };
+
+    function soilType(x) {
+        if (x.rock) { return 'rock'; }
+        var s = x.desc.toLowerCase();
+        return s.indexOf('sand') >= 0 ? 'sand' : s.indexOf('silt') >= 0 ? 'silt' : 'clay';
+    }
+    function fillFor(x, type) {
+        var head = x.desc.slice(0, 40);
+        for (var i = 0; i < COLOUR_WORDS.length; i++) { if (COLOUR_WORDS[i][0].test(head)) { return COLOUR_WORDS[i][1]; } }
+        return TYPE_COLOUR[type];
+    }
+    function diag(d, x, y, w, h, sp, dir) {
+        for (var c = -h; c < w; c += sp) {
+            var t0 = Math.max(0, -c), t1 = Math.min(h, w - c);
+            if (t1 > t0) {
+                if (dir > 0) { d.line(x + c + t0, y + t0, x + c + t1, y + t1); }
+                else { d.line(x + w - c - t0, y + t0, x + w - c - t1, y + t1); }
+            }
+        }
+    }
+    function hatch(d, type, x, y, w, h) {
+        d.setDrawColor(70); d.setFillColor(70); d.setLineWidth(0.12);
+        var yy, xx, row = 0;
+        if (type === 'clay') {
+            for (yy = y + 1.6; yy < y + h - 0.4; yy += 2.2) { d.line(x + 0.8, yy, x + w - 0.8, yy); }
+        } else if (type === 'silt') {
+            d.setLineDashPattern([1.2, 0.8], 0);
+            for (yy = y + 1.6; yy < y + h - 0.4; yy += 2.2) { d.line(x + 0.8, yy, x + w - 0.8, yy); }
+            d.setLineDashPattern([], 0);
+        } else if (type === 'sand') {
+            for (yy = y + 1.4; yy < y + h - 0.6; yy += 2.2, row++) {
+                for (xx = x + 1.4 + (row % 2 ? 1.1 : 0); xx < x + w - 0.8; xx += 2.2) { d.circle(xx, yy, 0.17, 'F'); }
+            }
+        } else {
+            diag(d, x, y, w, h, 3, 1); diag(d, x, y, w, h, 3, -1);
+        }
+    }
+
+    function drawProfile(d, clean) {
+        var src = window.masterData || [];
+        var md = src.map(function (x) {
+            return { from: parseFloat(x.from), to: parseFloat(x.to), desc: String(x.desc || ''), n: parseFloat(x.n),
+                     cr: x.cr, rqd: x.rqd, rec: x.rec, rock: x.cr !== '-' && x.cr !== undefined };
+        }).filter(function (x) { return isFinite(x.from) && isFinite(x.to) && x.to > x.from; });
+        if (!md.length) { return; }
+        md.sort(function (a, b) { return a.from - b.from; });
+        function val(id) { var e = document.getElementById(id); return e ? e.value : ''; }
+        var bh = val('bh_no'), loc = val('site_loc'), gwt = parseFloat(val('gwt'));
+        var dt = val('date_log') || new Date().toLocaleDateString('en-IN');
+        var maxD = Math.max.apply(null, md.map(function (x) { return x.to; }));
+        var CH = 30, nCh = Math.ceil(maxD / CH);
+        var maxN = 0;
+        md.forEach(function (x) { if (!x.rock && x.n > 0) { maxN = Math.max(maxN, x.n); } });
+        var axMax = Math.min(100, Math.max(50, Math.ceil((maxN + 6) / 10) * 10));
+
+        var XS = 24, SW = 28, XD = 52, DW = 122, XN = 180, NW = 100, Y0 = 46, H = 148;
+        var scale = nCh > 1 ? H / CH : Math.min(14, H / maxD);
+
+        for (var c = 0; c < nCh; c++) {
+            var st = c * CH, en = Math.min(maxD, st + CH);
+            var Y = function (dep) { return Y0 + (dep - st) * scale; };
+            d.addPage();
+            /* title box */
+            d.setDrawColor(0); d.setLineWidth(0.6); d.rect(ML, TOP, CW, 18);
+            d.setFont('helvetica', 'bold'); d.setFontSize(14); d.setTextColor(0);
+            d.text('BORELOG PROFILE' + (nCh > 1 ? '  (depth ' + st + ' - ' + en + ' m)' : ''), PW / 2, TOP + 7, { align: 'center' });
+            d.setFont('helvetica', 'normal'); d.setFontSize(9);
+            d.text(clean('Borehole: ' + (bh || '-') + '   |   Location: ' + (loc || '-') + '   |   Date: ' + dt + '   |   GWT: ' + (isFinite(gwt) ? gwt + ' m' : 'not encountered / not given')), PW / 2, TOP + 14, { align: 'center' });
+            /* column headers */
+            d.setFillColor(225, 225, 225); d.setLineWidth(0.3);
+            d.rect(ML, 32, XN + NW - ML, 7, 'FD');
+            d.setFont('helvetica', 'bold'); d.setFontSize(8);
+            d.text('Depth (m)', (ML + XS) / 2 + 2, 36.6, { align: 'center' });
+            d.text('Strata', XS + SW / 2, 36.6, { align: 'center' });
+            d.text('Description of Strata', XD + DW / 2, 36.6, { align: 'center' });
+            d.text('SPT N-value (blows / 30 cm)', XN + NW / 2, 36.6, { align: 'center' });
+            /* N axis grid */
+            d.setFont('helvetica', 'normal'); d.setFontSize(6.5);
+            for (var g = 0; g <= axMax; g += 10) {
+                var gx = XN + g / axMax * NW;
+                d.setDrawColor(200); d.setLineWidth(0.1); d.line(gx, Y0, gx, Y0 + (en - st) * scale);
+                d.setTextColor(60); d.text(String(g), gx, Y0 - 1.5, { align: 'center' });
+            }
+            d.setTextColor(0);
+            /* layers */
+            md.forEach(function (x) {
+                var a = Math.max(x.from, st), b = Math.min(x.to, en);
+                if (b <= a) { return; }
+                var ya = Y(a), yb = Y(b), hb = yb - ya, type = soilType(x), f = fillFor(x, type);
+                d.setFillColor(f[0], f[1], f[2]); d.rect(XS, ya, SW, hb, 'F');
+                hatch(d, type, XS, ya, SW, hb);
+                d.setDrawColor(0); d.setLineWidth(0.3); d.rect(XS, ya, SW, hb, 'S');
+                d.setDrawColor(150); d.setLineWidth(0.12); d.line(XS + SW, ya, XN + NW, ya); d.line(XS + SW, yb, XN + NW, yb);
+                var extra = x.rock ? ('  [Core recovery ' + x.cr + '%, RQD ' + x.rqd + '%]') : (x.rec ? ('  [' + x.rec + ']') : '');
+                d.setFont('helvetica', 'normal'); d.setFontSize(7.5); d.setTextColor(0);
+                var lines = d.splitTextToSize(clean(x.desc + extra), DW - 4), lh = 3.1;
+                var mx = Math.max(1, Math.floor((hb - 0.6) / lh));
+                if (lines.length > mx) { lines = lines.slice(0, mx); lines[mx - 1] = lines[mx - 1].replace(/.{0,3}$/, '...'); }
+                d.text(lines, XD + 2, ya + (hb - lines.length * lh) / 2 + lh * 0.78);
+            });
+            /* depth scale + ticks */
+            var step = scale >= 9 ? 1 : scale >= 5 ? 2 : 5;
+            d.setFontSize(7); d.setTextColor(0); d.setDrawColor(0); d.setLineWidth(0.2);
+            var t0 = Math.ceil(st / step) * step;
+            for (var t = t0; t <= en + 1e-9; t += step) {
+                d.line(XS - 1.5, Y(t), XS, Y(t));
+                d.text(String(t), XS - 2.4, Y(t) + 1, { align: 'right' });
+            }
+            d.line(XS, Y0, XS, Y(en));
+            /* N plot */
+            var pts = md.filter(function (x) { return !x.rock && x.n > 0 && ((x.from + x.to) / 2) >= st && ((x.from + x.to) / 2) <= en; })
+                .map(function (x) { return { x: XN + Math.min(x.n, axMax) / axMax * NW, y: Y((x.from + x.to) / 2), n: x.n }; });
+            d.setDrawColor(0, 90, 170); d.setLineWidth(0.4);
+            for (var k = 1; k < pts.length; k++) { d.line(pts[k - 1].x, pts[k - 1].y, pts[k].x, pts[k].y); }
+            d.setFillColor(0, 90, 170); d.setFontSize(6.5);
+            pts.forEach(function (p) { d.circle(p.x, p.y, 0.9, 'F'); d.setTextColor(0, 60, 130); d.text(String(p.n), p.x + 1.8, p.y + 0.9); });
+            d.setTextColor(0);
+            d.setDrawColor(0); d.setLineWidth(0.3); d.rect(XN, Y0, NW, (en - st) * scale, 'S');
+            /* GWT */
+            if (isFinite(gwt) && gwt >= st && gwt <= en) {
+                var gy = Y(gwt);
+                d.setDrawColor(0, 90, 200); d.setLineWidth(0.5); d.setLineDashPattern([2.2, 1.4], 0);
+                d.line(XS - 1, gy, XN + NW, gy); d.setLineDashPattern([], 0);
+                d.setFillColor(0, 90, 200); d.triangle(XD + DW - 5, gy - 3.6, XD + DW - 1, gy - 3.6, XD + DW - 3, gy - 0.6, 'F');
+                d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(0, 70, 170);
+                d.text('GWT = ' + gwt + ' m', XD + DW - 6.5, gy - 1.2, { align: 'right' });
+                d.setTextColor(0);
+            }
+            /* legend */
+            var lx = ML, ly = 200.5;
+            d.setFont('helvetica', 'normal'); d.setFontSize(7);
+            ['clay', 'silt', 'sand', 'rock'].forEach(function (tp) {
+                var f2 = TYPE_COLOUR[tp];
+                d.setFillColor(f2[0], f2[1], f2[2]); d.setDrawColor(0); d.setLineWidth(0.2); d.rect(lx, ly - 3, 8, 4.5, 'FD');
+                hatch(d, tp, lx, ly - 3, 8, 4.5);
+                d.setTextColor(0); d.text(tp.charAt(0).toUpperCase() + tp.slice(1), lx + 9.5, ly + 0.4);
+                lx += 28;
+            });
+            d.setDrawColor(0, 90, 200); d.setLineWidth(0.5); d.setLineDashPattern([2, 1.2], 0); d.line(lx, ly - 0.8, lx + 9, ly - 0.8); d.setLineDashPattern([], 0);
+            d.text('Ground water table', lx + 11, ly + 0.4); lx += 45;
+            d.setFillColor(0, 90, 170); d.circle(lx + 2, ly - 0.8, 0.9, 'F'); d.setTextColor(0); d.text('SPT N (N = blows 15-30 + 30-45 cm)', lx + 5, ly + 0.4);
+            d.setTextColor(110); d.text('Hatch shows soil type; fill colour is taken from the colour typed in the description.', ML, ly + 4.2);
+            d.setTextColor(0);
+        }
+    }
+
     async function buildPdf(opt, wrap) {
         var J = window.jspdf && window.jspdf.jsPDF;
         if (!J) { throw new Error('jsPDF library load nahi hui (internet chahiye).'); }
@@ -3785,6 +3938,9 @@ Object.assign(window,{addRow,num,loadEx,runAll,dlReport,newSamp,dzTab,dzOpen,dzI
 
         for (var c = 0; c < wrap.children.length; c++) { await handle(wrap.children[c]); }
 
+        if (opt && /^Borelog_Report/.test(opt.filename || '')) {
+            try { drawProfile(d, clean); } catch (pe) { if (window.console) { console.warn('Borelog profile skipped:', pe); } }
+        }
         var total = d.getNumberOfPages();
         for (var p = 1; p <= total; p++) {
             d.setPage(p);
